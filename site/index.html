@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>How far is help? Chennai on foot</title>
+  <meta name="description" content="A walking-reach map of Chennai: how many people can reach a hospital, pharmacy, school, grocery, park and transit within 15 minutes on foot. Built on Amazon Location Service with Overture Maps and HRSL population data from the Registry of Open Data on AWS.">
+  <meta property="og:title" content="How far is help? Chennai on foot">
+  <meta property="og:description" content="Click anywhere in Chennai to see the real 15-minute walk from there, and what's inside it.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%230f766e'/%3E%3Cpath d='M16 7v18M7 16h18' stroke='white' stroke-width='4'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="vendor/maplibre-gl.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="layout">
+    <aside class="panel" id="panel" aria-label="Story and controls">
+      <header class="intro">
+        <p class="eyebrow">Chennai · on foot · 15 minutes</p>
+        <h1>How far is help?</h1>
+        <p class="lede">
+          <strong class="big" id="stat-no-hospital">–</strong>
+          people in and around Chennai live more than a 15-minute walk from the nearest hospital or clinic.
+        </p>
+        <p class="hint" id="hint">
+          <span class="dot" aria-hidden="true"></span>
+          <span><b>Click anywhere on the map</b> to see the real 15-minute walk from that spot, and what's inside it.</span>
+        </p>
+      </header>
+
+      <form class="search" id="search" role="search">
+        <label for="q" class="sr-only">Search a place in Chennai</label>
+        <input id="q" name="q" type="search" placeholder="Search an address or area, e.g. Velachery" autocomplete="off">
+        <button type="submit">Go</button>
+        <ul class="search-results" id="search-results" hidden></ul>
+      </form>
+
+      <section class="result" id="result" hidden aria-live="polite"></section>
+
+      <section class="controls" aria-labelledby="colour-by">
+        <h2 id="colour-by">Colour the city by</h2>
+        <div class="chips" id="chips" role="radiogroup" aria-label="Essential to map"></div>
+        <div class="legend" id="legend" aria-hidden="true"></div>
+        <label class="toggle"><input type="checkbox" id="show-places" checked> Show the places themselves (zoom in)</label>
+      </section>
+
+      <section class="findings" aria-labelledby="findings-h">
+        <h2 id="findings-h">What the map shows</h2>
+        <div class="bars" id="bars"></div>
+        <p class="small" id="all-six"></p>
+      </section>
+
+      <section class="worst" aria-labelledby="worst-h">
+        <h2 id="worst-h">Furthest from a hospital</h2>
+        <p class="small">Named areas with the most people beyond a 15-minute walk. Tap one to walk it for real.</p>
+        <ol id="worst"></ol>
+      </section>
+
+      <section class="catch" aria-labelledby="catch-h">
+        <h2 id="catch-h">The catch</h2>
+        <ul>
+          <li><b>The colours are an estimate.</b> Each hexagon uses straight-line distance × 1.35 for street detours at 4.8 km/h. Clicking replaces that guess with a real walking area from Amazon Location Service.</li>
+          <li><b>Map data has gaps.</b> Overture Places comes from open and business listings. It misses some government clinics and many small shops, and "hospital" includes private nursing homes. I kept places with confidence ≥ 0.5 and dropped ones marked closed.</li>
+          <li><b>Transit means stations,</b> not every MTC bus stop. Roadside bus stops aren't in the dataset, so this layer undercounts bus access. Read it as "rail or bus station", not "any bus".</li>
+          <li><b>Reach isn't capacity.</b> A clinic 5 minutes away might be full, expensive or closed at night.</li>
+        </ul>
+      </section>
+
+      <footer class="sources">
+        <h2>Data and how it's built</h2>
+        <p>
+          Places: <a href="https://registry.opendata.aws/overture/" target="_blank" rel="noopener">Overture Maps</a> (release 2026-10-21.0, read from S3).
+          Population: <a href="https://registry.opendata.aws/dataforgood-fb-hrsl/" target="_blank" rel="noopener">Meta &amp; CIESIN High Resolution Settlement Layer</a> (CC BY 4.0, read from S3).
+          Map, search, walking areas and routes: <b>Amazon Location Service</b>. Hosted on <b>AWS Amplify</b>.
+        </p>
+        <p><a href="https://github.com/MdIbuA/reach-map" target="_blank" rel="noopener">Code and pipeline on GitHub</a> · by Mohamed Ibrahim A.</p>
+      </footer>
+    </aside>
+
+    <div class="map-wrap">
+      <div id="map" role="region" aria-label="Map of Chennai walking reach"></div>
+      <div class="map-note" id="map-note" hidden></div>
+    </div>
+  </main>
+
+  <script src="config.js"></script>
+  <script src="vendor/maplibre-gl.js"></script>
+  <script src="vendor/h3-js.umd.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

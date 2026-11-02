@@ -1,0 +1,14 @@
+version: 1
+frontend:
+  phases:
+    build:
+      commands:
+        # The Amazon Location API key is referrer-restricted to this site, so it
+        # is safe in the browser. It lives in Amplify environment variables,
+        # never in the repo.
+        - test -n "$LOCATION_API_KEY" || echo "WARNING: LOCATION_API_KEY not set"
+        - printf 'window.REACH_CONFIG = { region: "%s", apiKey: "%s" };\n' "${LOCATION_REGION:-us-east-1}" "$LOCATION_API_KEY" > site/config.js
+  artifacts:
+    baseDirectory: site
+    files:
+      - '**/*'
