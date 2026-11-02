@@ -539,7 +539,7 @@
   }
 
   function flyHome(duration = 1600) {
-    map.flyTo({ center: CENTER, zoom: MOBILE() ? 9.9 : 10.55, pitch: state.is3d ? 52 : 0, bearing: state.is3d ? -18 : 0, padding: MOBILE() ? {} : { left: 440 }, duration: REDUCED ? 0 : duration, essential: true });
+    map.flyTo({ center: CENTER, zoom: MOBILE() ? 9.9 : 10.55, pitch: state.is3d ? 52 : 0, bearing: state.is3d ? -18 : 0, padding: MOBILE() ? { top: 0, bottom: 0, left: 0, right: 0 } : { top: 0, bottom: 0, left: 440, right: 0 }, duration: REDUCED ? 0 : duration, essential: true });
   }
 
   // ---------- panel ----------
@@ -611,7 +611,7 @@
     return [
       {
         text: `This is Chennai: <b>${(s.population / 1e6).toFixed(1)} million people</b>, mapped in ${fmt(s.cells)} hexagons. Each tower's <span class="cool">height</span> is how many people live there.`,
-        run: async () => { setMode("hospital"); state.walking = false; setHeights(); map.flyTo({ center: CENTER, zoom: MOBILE() ? 9.9 : 10.6, pitch: 58, bearing: -28, padding: MOBILE() ? {} : { left: 440 }, duration: REDUCED ? 0 : 3000 }); },
+        run: async () => { setMode("hospital"); state.walking = false; setHeights(); map.flyTo({ center: CENTER, zoom: MOBILE() ? 9.9 : 10.6, pitch: 58, bearing: -28, padding: MOBILE() ? { top: 0, bottom: 0, left: 0, right: 0 } : { top: 0, bottom: 0, left: 440, right: 0 }, duration: REDUCED ? 0 : 3000 }); },
         ms: 6500,
       },
       {
@@ -665,6 +665,43 @@
     $("tour").hidden = true;
   }
   $("tour-btn").onclick = playTour;
+
+  // ---------- landing ----------
+
+  let spinning = false;
+  function spin() {
+    if (!spinning || REDUCED) return;
+    map.easeTo({ bearing: map.getBearing() - 20, duration: 12000, easing: (t) => t });
+    map.once("moveend", () => spin());
+  }
+  function showLanding() {
+    const s = state.summary;
+    document.body.classList.add("landing");
+    countUp($("l-stat"), Math.round(s.people_no_hospital / 1000) * 1000, 2200);
+    const oneIn = Math.round(s.population / s.people_no_hospital);
+    const park = Math.round(s.share_within_reach.park * 100);
+    $("l-cards").innerHTML = [
+      ["hot", `1 in ${oneIn}`, "people are beyond a 15-minute walk to a hospital or clinic"],
+      ["warm", `${Math.round(s.share_all_six * 100)}%`, "can walk to all six everyday essentials"],
+      ["cool", `${(s.population / 1e6).toFixed(1)}M`, `people in ${fmt(s.cells)} hexagons, each walked against ${fmt(s.essentials.reduce((a, e) => a + e.count, 0))} places`],
+    ].map(([c, v, k], i) => `<div class="l-card" style="animation-delay:${200 + i * 120}ms"><div class="v ${c}">${v}</div><div class="k">${esc(k)}</div></div>`).join("");
+    map.jumpTo({ center: [80.235, 13.03], zoom: MOBILE() ? 9.6 : 10.4, pitch: 60, bearing: -20, padding: MOBILE() ? { top: 0, left: 0, right: 0, bottom: Math.round(window.innerHeight * 0.55) } : { left: Math.min(window.innerWidth * 0.45, 640) } });
+    spinning = true;
+    spin();
+    setTimeout(() => $("l-tour").focus({ preventScroll: true }), 300);
+  }
+  function hideLanding(then) {
+    spinning = false;
+    map.stop();
+    document.body.classList.remove("landing");
+    map.resize();
+    setTimeout(then, 250);
+  }
+  $("l-tour").onclick = () => hideLanding(playTour);
+  $("l-explore").onclick = () => hideLanding(() => flyHome(2000));
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && document.body.classList.contains("landing")) hideLanding(() => flyHome(2000));
+  });
   $("tour-next").onclick = () => { if (tour.next) tour.next(); };
   $("tour-skip").onclick = endTour;
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && tour.on) endTour(); });
@@ -718,13 +755,14 @@
     }
     map.on("click", (e) => { if (!tour.on) analyse([e.lngLat.lng, e.lngLat.lat]); });
     const m = location.hash.match(/^#@(-?\d+\.?\d*),(-?\d+\.?\d*)/);
-    if (m) analyse([Number(m[2]), Number(m[1])]);
-    else flyHome(2600);
+    if (m) { document.body.classList.remove("landing"); analyse([Number(m[2]), Number(m[1])]); }
+    else showLanding();
     const attrib = document.querySelector(".maplibregl-ctrl-attrib");
     if (attrib && MOBILE()) attrib.classList.remove("maplibregl-compact-show");
     window.__reachReady = true;
   });
   dataReady.catch((err) => {
+    document.body.classList.remove("landing");
     $("panel").insertAdjacentHTML("afterbegin", `<p class="small" style="color:#ff5a36">Couldn't load the map data (${esc(err.message)}). Try reloading.</p>`);
   });
 })();

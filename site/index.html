@@ -15,9 +15,34 @@
   <link rel="stylesheet" href="vendor/maplibre-gl.css">
   <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body class="landing">
   <div id="map" role="region" aria-label="3D map of walking reach across Chennai"></div>
   <div class="vignette" aria-hidden="true"></div>
+
+  <section class="landing-page" id="landing" aria-labelledby="landing-title">
+    <div class="l-inner">
+      <p class="eyebrow"><span class="live-dot" aria-hidden="true"></span>Chennai · on foot · 15 minutes</p>
+      <h1 id="landing-title" class="l-title">How far<br>is <em>help?</em></h1>
+      <p class="l-lede">
+        <strong class="l-big" id="l-stat">0</strong>
+        people in Chennai live more than a <b>15-minute walk</b> from the nearest hospital or clinic.
+      </p>
+      <div class="l-cards" id="l-cards"></div>
+      <div class="l-cta">
+        <button type="button" class="btn btn-primary btn-lg" id="l-tour">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>
+          Play the story <span class="l-dur">40 s</span>
+        </button>
+        <button type="button" class="btn btn-ghost btn-lg" id="l-explore">Explore the map</button>
+      </div>
+      <p class="l-how">Every tower behind this text is a neighbourhood: <b>height</b> is how many people live there, <b>colour</b> is how long they walk to a hospital. Click anywhere and Amazon Location Service draws the real 15-minute walk from that spot.</p>
+    </div>
+    <footer class="l-foot">
+      <span>Built on <b>Amazon Location Service</b></span>
+      <span>Overture Maps &amp; HRSL population from the <b>Registry of Open Data on AWS</b></span>
+      <span>Served from <b>Amazon S3</b></span>
+    </footer>
+  </section>
 
   <aside class="panel" id="panel" aria-label="Story and controls">
     <header class="intro">
