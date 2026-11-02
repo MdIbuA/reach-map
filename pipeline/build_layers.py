@@ -45,11 +45,12 @@ POP_COG = (
 H3_RES = 9
 
 # Walking model for the straight-line estimate:
-# 4.8 km/h (80 m/min), and real streets are ~1.35x longer than a straight line.
-WALK_M_PER_MIN = 80.0
+# Calibrated against 35 Amazon Location pedestrian routes (pipeline/calibrate.py):
+# median speed 57.8 m/min (3.5 km/h), median street/straight-line ratio 1.35.
+WALK_M_PER_MIN = 57.8
 DETOUR = 1.35
 REACH_MIN = 15
-REACH_M = REACH_MIN * WALK_M_PER_MIN / DETOUR  # ~889 m as the crow flies
+REACH_M = REACH_MIN * WALK_M_PER_MIN / DETOUR  # ~642 m as the crow flies
 
 MIN_CONFIDENCE = 0.5
 

@@ -1,8 +1,8 @@
 # How far is help? Chennai on foot
 
-**About 988,000 people in and around Chennai live more than a 15-minute walk from the nearest hospital or clinic.** This map shows where they live. Click any spot and Amazon Location Service draws the real 15-minute walk from there, then counts the essentials inside it.
+**About 1.6 million people in and around Chennai live more than a 15-minute walk from the nearest hospital or clinic.** This map shows where they live. Click any spot and Amazon Location Service draws the real 15-minute walk from there, then counts the essentials inside it.
 
-**Live map:** _add your Amplify URL here_
+**Live map:** http://reachmapbucket.s3-website-us-east-1.amazonaws.com
 **Built for:** AWS Builder Center Weekend Challenge, "Map it" (Oct 30 – Nov 2, 2026)
 
 ## What you can do on it
@@ -12,7 +12,7 @@
   - counts every hospital, pharmacy, school, grocery, park and station inside the 15-minute area
   - names what's missing ("Missing: park, train, metro or bus station")
   - routes you on foot to the nearest hospital or clinic (`CalculateRoutes`) and says how far over 15 minutes it is
-  - compares the real walk with the 1.2 km circle that "15 minutes" would cover in straight lines. Rivers, railway lines and dead-end streets shrink it, and the page says by how much.
+  - compares the real walk with the circle that 15 minutes would cover if you could walk in straight lines at the same pace (0.87 km). Rivers, railway lines and dead-end streets shrink it, and the page says by how much.
 - **Search any address** (Amazon Location `Geocode`) and the walk runs from there.
 - **Furthest from a hospital:** the ten named areas with the most people beyond a 15-minute walk. Tap one to check it.
 - **Share a walk.** The URL keeps the point (`#@12.98150,80.22070`).
@@ -21,17 +21,17 @@
 
 | Essential | Share of 8.48 M people within ~15 min on foot |
 |---|---|
-| Hospital or clinic | 88% |
-| Pharmacy | 87% |
-| School | 95% |
-| Grocery or market | 83% |
-| Park | 66% |
-| Train, metro or bus station | 71% |
-| **All six** | **52%** |
+| Hospital or clinic | 81% |
+| Pharmacy | 78% |
+| School | 90% |
+| Grocery or market | 73% |
+| Park | 49% |
+| Train, metro or bus station | 55% |
+| **All six** | **29%** |
 
 The gaps aren't in the old city. They're on the edges where Chennai grew fastest: Alinjivakkam, Vadaperumbakkam and Manjampakkam in the north and north-west, and Sholinganallur and Nookampalayam along the IT corridor in the south.
 
-These are city-wide *estimates* (straight-line × 1.35 detour at 4.8 km/h). Clicking replaces the estimate with real streets for that spot.
+These are city-wide *estimates*: straight-line distance × 1.35 for street detours, at 3.5 km/h. Both numbers are calibrated, not guessed. `pipeline/calibrate.py` asked Amazon Location for 35 real pedestrian routes from random populated hexagons to their nearest clinic. The median street-to-straight-line ratio was **1.35** and the median pace **57.8 m/min**. Clicking replaces the estimate with real streets for that spot.
 
 ## Datasets
 
@@ -46,7 +46,7 @@ There's no personal data. Every place is a public business or facility, and popu
 ## How it's built
 
 ```
- Registry of Open Data on AWS (S3)                     Browser (Amplify Hosting)
+ Registry of Open Data on AWS (S3)                     Browser (Amazon S3 website)
  ┌────────────────────────────────┐                   ┌──────────────────────────────────┐
  │ Overture Places  (GeoParquet)  │─┐                 │ MapLibre + Amazon Location Maps  │
  │ Overture Divisions (GeoParquet)│─┼─ pipeline/ ──►  │  data/hexes.json  (6.7k H3 cells)│
@@ -63,7 +63,7 @@ There's no personal data. Every place is a public business or facility, and popu
 
 **1. Read only the slice you need from S3.** `pipeline/extract_places.py` opens Overture's planet-scale GeoParquet with `pyarrow.dataset` and filters on the `bbox` struct column. Parquet row-group statistics let it skip almost the whole planet, so Chennai's 139k places arrive in **about 3 seconds**, with no AWS account and nothing downloaded in full. `pipeline/build_layers.py` reads only the Chennai window of the HRSL raster over HTTP range requests (it's a COG).
 
-**2. Precompute the city layer.** Population is summed into H3 resolution-9 cells. A KD-tree gives each cell the straight-line distance to the nearest place of each kind. That becomes the estimated walk in minutes (× 1.35 detour, 80 m/min). Each cell is tagged with its nearest named area. Output is three small JSON files (~720 KB total), served as static files.
+**2. Precompute the city layer.** Population is summed into H3 resolution-9 cells. A KD-tree gives each cell the straight-line distance to the nearest place of each kind. That becomes the estimated walk in minutes (× 1.35 detour, 57.8 m/min, both calibrated against Amazon Location routes). Each cell is tagged with its nearest named area. Output is three small JSON files (~720 KB total), served as static files.
 
 **3. Ask Amazon Location for the truth on demand.** One click makes two calls:
 
@@ -90,7 +90,7 @@ Point-in-polygon runs in the browser against the 6.5k essentials, so counting is
 |---|---|
 | **Amazon Location Service** | Base map (Maps, Monochrome style), walking isolines and routes (Routes), search (Places Geocode). One referrer-restricted API key. |
 | **Amazon S3** (Registry of Open Data on AWS) | Source of both datasets, read in place: GeoParquet via predicate pushdown, COG via range requests |
-| **AWS Amplify Hosting** | Builds from GitHub on each push, injects the API key from an environment variable, serves over HTTPS |
+| **Amazon S3** (static website hosting) | Serves the site itself: about 2 MB of HTML, JS and JSON, no server |
 
 ## Reuse it for your city
 
@@ -102,22 +102,28 @@ Point-in-polygon runs in the browser against the 6.5k essentials, so counting is
 
 To track a different set of essentials, edit the `ESSENTIALS` list in `build_layers.py`. Each entry maps Overture `basic_category` and `taxonomy.primary` values to one layer.
 
-## Deploy (AWS Amplify + Amazon Location)
+## Deploy (Amazon S3 + Amazon Location)
 
-1. **Amplify:** Console → AWS Amplify → *Create new app* → GitHub → `MdIbuA/reach-map`, branch `main`. It picks up `amplify.yml`. Deploy once and copy the domain (`https://main.xxxx.amplifyapp.com`).
-2. **API key:** Console → Amazon Location Service (region **us-east-1**) → *API keys* → *Create API key*.
-   - Name: `reach-map-web`
-   - Allowed actions: **Maps** `GetTile` (and `GetStaticMap` if listed), **Places** `Geocode`, **Routes** `CalculateIsolines` and `CalculateRoutes`
-   - Allowed referrers: `https://main.xxxx.amplifyapp.com/*` and `http://localhost:8000/*`
-   - Expiry: a date after judging, for example 2026-12-31
-3. **Wire it in:** Amplify → the app → *Hosting → Environment variables*. Add `LOCATION_API_KEY` = the key value and `LOCATION_REGION` = `us-east-1`. Then *Redeploy this version*.
-4. Open the site, click the map, and check that the teal walking area isn't a perfect circle and the legend says "real walk".
+The live map runs on S3 static website hosting.
 
-Cost at demo scale is inside the Amazon Location free tier and Amplify's free tier. Set an AWS Budget alert anyway.
+1. **API key:** Console → Amazon Location Service (region **us-east-1**) → *API keys* → *Create API key*.
+   - Allowed actions: **Maps** `GetTile`, **Places** `Geocode`, **Routes** `CalculateIsolines` and `CalculateRoutes`
+   - Allowed referrers: your site URL plus `/*`
+   - Expiry: a date after you need it
+2. Put the key into `site/config.js`: `window.REACH_CONFIG = { region: "us-east-1", apiKey: "v1.public..." };`
+3. **S3:** create a bucket and upload the *contents* of `site/` (so `index.html` sits at the top level).
+   - Turn off *Block all public access* for the bucket.
+   - Add a bucket policy allowing `s3:GetObject` on `arn:aws:s3:::<bucket>/*`.
+   - *Properties → Static website hosting → Enable*, with index document `index.html`.
+4. Open the bucket website endpoint, click the map, and check that the walking area isn't a perfect circle and the legend says "real walk".
+
+**HTTPS:** S3 website endpoints are HTTP only, so the "locate me" button is disabled by the browser. Putting CloudFront in front gives HTTPS; this account was waiting on AWS verification for CloudFront during the challenge. `amplify.yml` is also included if you'd rather host on AWS Amplify: set `LOCATION_API_KEY` and `LOCATION_REGION` as environment variables.
+
+Cost at demo scale is a few cents: S3 serves about 2 MB, and each click makes two Amazon Location Routes calls. Set an AWS Budget alert anyway.
 
 ## The catch
 
-- **The hexagon colours are estimates.** Clicking gives real streets for one point. The city-wide numbers (88%, 988,000) come from the estimate.
+- **The hexagon colours are estimates.** Clicking gives real streets for one point. The city-wide numbers (81%, 1.6 million) come from the calibrated estimate.
 - **Overture has gaps in India.** It misses some government primary health centres and many small kirana shops, and "hospital" includes private nursing homes. That probably makes the map *too optimistic* about clinics and *too pessimistic* about groceries.
 - **Transit means stations.** MTC roadside bus stops aren't in Overture Places.
 - **Reach isn't access.** A clinic 5 minutes away can still be full, unaffordable or closed at night.

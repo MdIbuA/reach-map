@@ -18,8 +18,10 @@
   const CFG = Object.assign({ region: "us-east-1", apiKey: "" }, window.REACH_CONFIG || {});
   const HAS_KEY = Boolean(CFG.apiKey);
   const CENTER = [80.235, 13.04];
-  const WALK_M_PER_MIN = 80; // 4.8 km/h
-  const CIRCLE_M = 15 * WALK_M_PER_MIN; // what "15 minutes" covers if streets were straight
+  // Walking speed and the straight-line circle come from data/summary.json,
+  // calibrated against Amazon Location pedestrian routes (pipeline/calibrate.py).
+  let WALK_M_PER_MIN = 57.8;
+  let CIRCLE_M = 15 * WALK_M_PER_MIN; // what "15 minutes" covers if streets were straight
 
   const KIND_COLOURS = ["#dc2626", "#a21caf", "#2563eb", "#ca8a04", "#15803d", "#0891b2"];
   const MINUTE_STEPS = [5, 10, 15, 20, 30];
@@ -159,6 +161,8 @@
     state.summary = summary; state.hex = hex; state.ess = ess;
     state.kinds = summary.essentials;
     state.detour = summary.detour;
+    WALK_M_PER_MIN = summary.walk_m_per_min;
+    CIRCLE_M = 15 * WALK_M_PER_MIN;
     state.cellIndex = new Map(hex.cells.map((c, i) => [c[0], i]));
   }
 
@@ -438,7 +442,7 @@
     const pct = Math.round((area15 / areaCircle) * 100);
     const circleNote = isoError
       ? `<p class="circle-note">${HAS_KEY ? "Couldn't reach Amazon Location Service just now" : "No Amazon Location API key is configured"}, so these rings are a straight-line estimate, not real streets.</p>`
-      : `<p class="circle-note">The dashed circle is what "15 minutes" covers if you could walk in straight lines (1.2 km). Real streets reach <b>${pct}%</b> of that area here. The circle holds <b>${inCircle.length}</b> essential places; your feet reach <b>${inside.length}</b>.</p>`;
+      : `<p class="circle-note">The dashed circle is what "15 minutes" covers if you could walk in straight lines at the same pace (${(CIRCLE_M / 1000).toFixed(2)} km). Real streets reach <b>${pct}%</b> of that area here. The circle holds <b>${inCircle.length}</b> essential places; your feet reach <b>${inside.length}</b>.</p>`;
 
     const rows = state.kinds.map((k, i) => {
       const n = nearestOfKind(lonlat, i);
@@ -450,7 +454,7 @@
     box.innerHTML = `
       <h3>Your 15-minute walk</h3>
       <p class="where">from near <b>${esc(area)}</b> · ${lonlat[1].toFixed(4)}, ${lonlat[0].toFixed(4)}</p>
-      <div class="key-swatches"><span class="k-walk">${isoError ? "estimated" : "real"} walk: 5 / 10 / 15 min</span><span class="k-circle">1.2 km circle</span><span class="k-route">route</span></div>
+      <div class="key-swatches"><span class="k-walk">${isoError ? "estimated" : "real"} walk: 5 / 10 / 15 min</span><span class="k-circle">straight-line circle</span><span class="k-route">route</span></div>
       <p class="verdict"><b>${have} of 6</b> essentials within 15 minutes on foot.${missing.length ? ` Missing: <b>${esc(missing.join(", "))}</b>.` : " Everything's in reach."}</p>
       <table>
         <thead><tr><th>Essential</th><td>in walk</td><td>nearest</td></tr></thead>
