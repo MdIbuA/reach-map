@@ -4,10 +4,10 @@
  *   data/hexes.json      H3 res-9 cells: population + straight-line metres to
  *                        the nearest of each essential
  *   data/essentials.json every essential place
- *   data/summary.json    city-wide numbers
+ *   data/summary.json    city-wide numbers and the calibrated walking model
  *
  * Live, from Amazon Location Service (API key in config.js):
- *   Maps    base map style
+ *   Maps    dark base map style
  *   Routes  CalculateIsolines (5/10/15-min walking areas) and CalculateRoutes
  *           (walk to the nearest hospital)
  *   Places  Geocode (search box)
@@ -17,33 +17,37 @@
 
   const CFG = Object.assign({ region: "us-east-1", apiKey: "" }, window.REACH_CONFIG || {});
   const HAS_KEY = Boolean(CFG.apiKey);
-  const CENTER = [80.235, 13.04];
-  // Walking speed and the straight-line circle come from data/summary.json,
-  // calibrated against Amazon Location pedestrian routes (pipeline/calibrate.py).
-  let WALK_M_PER_MIN = 57.8;
-  let CIRCLE_M = 15 * WALK_M_PER_MIN; // what "15 minutes" covers if streets were straight
+  const CENTER = [80.215, 13.035];
+  const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const MOBILE = () => window.matchMedia("(max-width: 820px)").matches;
 
-  const KIND_COLOURS = ["#dc2626", "#a21caf", "#2563eb", "#ca8a04", "#15803d", "#0891b2"];
+  // Calibrated against Amazon Location pedestrian routes (pipeline/calibrate.py);
+  // overwritten from data/summary.json on load.
+  let WALK_M_PER_MIN = 57.8;
+  let CIRCLE_M = 15 * WALK_M_PER_MIN;
+
+  const KIND_COLOURS = ["#ff4d4d", "#d77bff", "#4da3ff", "#ffc23d", "#4ade80", "#22d3ee"];
   const MINUTE_STEPS = [5, 10, 15, 20, 30];
-  const MINUTE_COLOURS = ["#115e59", "#14b8a6", "#99f6e4", "#fdba74", "#f97316", "#9a3412"];
-  const COUNT_COLOURS = ["#7c2d12", "#c2410c", "#f97316", "#fed7aa", "#99f6e4", "#2dd4bf", "#0f766e"];
-  const HEX_OPACITY = ["interpolate", ["linear"], ["get", "pop"], 0, 0.25, 400, 0.72];
-  const ISO_STYLE = { 900: ["#99f6e4", 0.35], 600: ["#2dd4bf", 0.35], 300: ["#0f766e", 0.35] };
+  const MINUTE_COLOURS = ["#0f4c5c", "#16807f", "#3fd5c4", "#ffb347", "#ff6b2c", "#ff2e4d"];
+  const COUNT_COLOURS = ["#ff2e4d", "#ff5a36", "#ff8c2c", "#ffc061", "#3fd5c4", "#16a39a", "#0f5f66"];
+  const ISO_STYLE = { 900: ["#3fd5c4", 0.16], 600: ["#3fd5c4", 0.2], 300: ["#3fd5c4", 0.28] };
+  const HEIGHT = ["interpolate", ["linear"], ["get", "pop"], 0, 0, 1000, 450, 3000, 1100, 6000, 1800];
 
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const fmt = (n) => Math.round(n).toLocaleString("en-US");
+  const sleep = (ms) => new Promise((r) => setTimeout(r, REDUCED ? Math.min(ms, 50) : ms));
 
-  const state = { mode: "hospital", summary: null, hex: null, ess: null, busy: false, last: null };
+  const state = { mode: "hospital", is3d: true, summary: null, hex: null, ess: null, busy: false, walking: false };
 
   // ---------- Amazon Location Service ----------
 
   const api = {
     style() {
       if (!HAS_KEY) {
-        return { version: 8, sources: {}, layers: [{ id: "bg", type: "background", paint: { "background-color": "#e8ecea" } }] };
+        return { version: 8, sources: {}, layers: [{ id: "bg", type: "background", paint: { "background-color": "#0b0e13" } }] };
       }
-      return `https://maps.geo.${CFG.region}.amazonaws.com/v2/styles/Monochrome/descriptor?key=${encodeURIComponent(CFG.apiKey)}&color-scheme=Light`;
+      return `https://maps.geo.${CFG.region}.amazonaws.com/v2/styles/Monochrome/descriptor?key=${encodeURIComponent(CFG.apiKey)}&color-scheme=Dark`;
     },
     async post(service, path, body) {
       if (!HAS_KEY) throw new Error("No Amazon Location API key configured");
@@ -63,7 +67,7 @@
         clearTimeout(timer);
       }
     },
-    /** Returns [{seconds, rings: [[ [lon,lat]... ], ...] (MultiPolygon coords)}] */
+    /** [{seconds, polygons: MultiPolygon coordinates}] */
     async isolines(lonlat) {
       const out = await api.post("routes", "isolines", {
         Origin: lonlat,
@@ -109,7 +113,7 @@
     },
   };
 
-  // ---------- geometry helpers ----------
+  // ---------- geometry ----------
 
   const LAT0 = (13.04 * Math.PI) / 180;
   const M_PER_DEG_LAT = 111320;
@@ -136,7 +140,7 @@
   }
   const multiArea = (polys) => polys.reduce((s, p) => s + ringArea(p[0]) - p.slice(1).reduce((h, r) => h + ringArea(r), 0), 0);
 
-  function circle(center, radius, n = 72) {
+  function circle(center, radius, n = 96) {
     const ring = [];
     for (let i = 0; i <= n; i++) {
       const t = (i / n) * 2 * Math.PI;
@@ -167,6 +171,7 @@
   }
 
   const crowToMinutes = (m) => (m * state.detour) / WALK_M_PER_MIN;
+  const kindIndex = (key) => state.kinds.findIndex((k) => k.key === key);
 
   function hexGeoJSON() {
     const k = state.kinds.length;
@@ -179,23 +184,15 @@
         if (c[2 + i] <= reach) n++;
       }
       props.n = n;
-      return {
-        type: "Feature",
-        properties: props,
-        geometry: { type: "Polygon", coordinates: [h3.cellToBoundary(c[0], true)] },
-      };
+      return { type: "Feature", properties: props, geometry: { type: "Polygon", coordinates: [h3.cellToBoundary(c[0], true)] } };
     });
     return { type: "FeatureCollection", features };
   }
 
-  function placesGeoJSON(filterFn) {
+  function placesGeoJSON(list) {
     return {
       type: "FeatureCollection",
-      features: state.ess.places.filter(filterFn || (() => true)).map((p) => ({
-        type: "Feature",
-        properties: { kind: p[2], name: p[3] },
-        geometry: { type: "Point", coordinates: [p[0], p[1]] },
-      })),
+      features: list.map((p) => ({ type: "Feature", properties: { kind: p[2], name: p[3] }, geometry: { type: "Point", coordinates: [p[0], p[1]] } })),
     };
   }
 
@@ -204,54 +201,51 @@
   const map = new maplibregl.Map({
     container: "map",
     style: api.style(),
-    center: CENTER,
-    zoom: 10.6,
-    minZoom: 9,
+    center: [80.2, 13.0],
+    zoom: 9.2,
+    pitch: 0,
+    bearing: 0,
+    minZoom: 8.5,
     maxZoom: 17,
+    maxPitch: 70,
     attributionControl: false,
-    cooperativeGestures: window.matchMedia("(max-width: 820px)").matches,
+    cooperativeGestures: MOBILE(),
   });
-  map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+  map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
   map.addControl(new maplibregl.AttributionControl({
     compact: true,
     customAttribution: "Places © Overture Maps Foundation · Population © Meta & CIESIN HRSL (CC BY 4.0)",
   }));
-  map.addControl(new maplibregl.GeolocateControl({ showUserLocation: true }), "top-right");
 
   if (!HAS_KEY) {
     const note = $("map-note");
     note.hidden = false;
-    note.textContent = "Running without an Amazon Location API key: no base map, and walking areas fall back to a straight-line estimate.";
+    note.textContent = "No Amazon Location API key configured: no base map, and walks fall back to a straight-line estimate.";
   }
 
   function hexColour() {
     if (state.mode === "all") {
       const e = ["match", ["get", "n"]];
       COUNT_COLOURS.forEach((c, i) => e.push(i, c));
-      e.push("#999");
+      e.push("#555");
       return e;
     }
-    const idx = state.kinds.findIndex((k) => k.key === state.mode);
-    const e = ["step", ["get", "m" + idx], MINUTE_COLOURS[0]];
+    const e = ["step", ["get", "m" + kindIndex(state.mode)], MINUTE_COLOURS[0]];
     MINUTE_STEPS.forEach((s, i) => e.push(s, MINUTE_COLOURS[i + 1]));
     return e;
   }
 
-  function placesFilter() {
-    if (state.mode === "all") return true;
-    return ["==", ["get", "kind"], state.kinds.findIndex((k) => k.key === state.mode)];
-  }
+  const placesFilter = () => (state.mode === "all" ? true : ["==", ["get", "kind"], kindIndex(state.mode)]);
 
   function kindColourExpr() {
     const e = ["match", ["get", "kind"]];
     KIND_COLOURS.forEach((c, i) => e.push(i, c));
-    e.push("#444");
+    e.push("#aaa");
     return e;
   }
 
   function firstSymbolLayer() {
-    const layers = map.getStyle().layers || [];
-    const l = layers.find((x) => x.type === "symbol");
+    const l = (map.getStyle().layers || []).find((x) => x.type === "symbol");
     return l && l.id;
   }
 
@@ -259,89 +253,81 @@
     const before = firstSymbolLayer();
     map.addSource("hex", { type: "geojson", data: hexGeoJSON() });
     map.addLayer({
-      id: "hex-fill", type: "fill", source: "hex",
+      id: "hex", type: "fill-extrusion", source: "hex",
       paint: {
-        "fill-color": hexColour(),
-        "fill-opacity": HEX_OPACITY,
+        "fill-extrusion-color": hexColour(),
+        "fill-extrusion-height": state.is3d ? HEIGHT : 0,
+        "fill-extrusion-opacity": 0.86,
+        "fill-extrusion-vertical-gradient": true,
+        "fill-extrusion-height-transition": { duration: REDUCED ? 0 : 1200, delay: 0 },
       },
-    }, before);
-    map.addLayer({
-      id: "hex-line", type: "line", source: "hex", minzoom: 12.5,
-      paint: { "line-color": "#ffffff", "line-width": 0.4, "line-opacity": 0.6 },
     }, before);
 
-    map.addSource("places", { type: "geojson", data: placesGeoJSON() });
+    map.addSource("places", { type: "geojson", data: placesGeoJSON(state.ess.places) });
     map.addLayer({
-      id: "places", type: "circle", source: "places", minzoom: 12,
-      filter: placesFilter(),
-      paint: {
-        "circle-color": kindColourExpr(),
-        "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 2.5, 16, 6],
-        "circle-stroke-color": "#fff",
-        "circle-stroke-width": 1,
-      },
+      id: "places-glow", type: "circle", source: "places", minzoom: 12, filter: placesFilter(),
+      paint: { "circle-color": kindColourExpr(), "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 6, 16, 14], "circle-blur": 1, "circle-opacity": 0.45 },
+    });
+    map.addLayer({
+      id: "places", type: "circle", source: "places", minzoom: 12, filter: placesFilter(),
+      paint: { "circle-color": kindColourExpr(), "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 2.2, 16, 5], "circle-stroke-color": "#0b0d12", "circle-stroke-width": 1 },
     });
 
-    // Walk analysis layers.
     const empty = { type: "FeatureCollection", features: [] };
-    for (const id of ["iso", "circle", "route", "inside", "origin"]) map.addSource(id, { type: "geojson", data: empty });
+    for (const id of ["iso", "circle", "route", "inside"]) map.addSource(id, { type: "geojson", data: empty, lineMetrics: id === "route" });
+    map.addLayer({ id: "iso-fill", type: "fill", source: "iso", paint: { "fill-color": ["get", "colour"], "fill-opacity": ["get", "opacity"] } });
+    map.addLayer({ id: "iso-glow", type: "line", source: "iso", paint: { "line-color": "#3fd5c4", "line-width": 8, "line-blur": 6, "line-opacity": ["case", ["==", ["get", "seconds"], 900], 0.55, 0] } });
+    map.addLayer({ id: "iso-line", type: "line", source: "iso", paint: { "line-color": "#7ff5e6", "line-width": ["case", ["==", ["get", "seconds"], 900], 2.2, 0.8], "line-opacity": 0.95 } });
+    map.addLayer({ id: "circle-line", type: "line", source: "circle", paint: { "line-color": "#c7ced8", "line-width": 1.3, "line-dasharray": [2, 2], "line-opacity": 0.7 } });
+    map.addLayer({ id: "route-glow", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#ff4fa3", "line-width": 12, "line-blur": 8, "line-opacity": 0.6 } });
     map.addLayer({
-      id: "iso-fill", type: "fill", source: "iso",
-      paint: { "fill-color": ["get", "colour"], "fill-opacity": ["get", "opacity"] },
+      id: "route-line", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-width": 4, "line-gradient": ["interpolate", ["linear"], ["line-progress"], 0, "#ffffff", 0.25, "#ff4fa3", 1, "#ff2e4d"] },
     });
-    map.addLayer({
-      id: "iso-line", type: "line", source: "iso",
-      paint: { "line-color": "#0f766e", "line-width": ["case", ["==", ["get", "seconds"], 900], 2.5, 1] },
-    });
-    map.addLayer({
-      id: "circle-line", type: "line", source: "circle",
-      paint: { "line-color": "#57534e", "line-width": 1.5, "line-dasharray": [3, 2] },
-    });
-    map.addLayer({
-      id: "route-line", type: "line", source: "route",
-      layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": "#db2777", "line-width": 4 },
-    });
-    map.addLayer({
-      id: "inside", type: "circle", source: "inside",
-      paint: {
-        "circle-color": kindColourExpr(),
-        "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 3.5, 16, 7],
-        "circle-stroke-color": "#fff",
-        "circle-stroke-width": 1.5,
-      },
-    });
-    map.addLayer({
-      id: "origin", type: "circle", source: "origin",
-      paint: { "circle-color": "#1c1917", "circle-radius": 7, "circle-stroke-color": "#fff", "circle-stroke-width": 3 },
-    });
+    map.addLayer({ id: "inside-glow", type: "circle", source: "inside", paint: { "circle-color": kindColourExpr(), "circle-radius": 10, "circle-blur": 1, "circle-opacity": 0.5 } });
+    map.addLayer({ id: "inside", type: "circle", source: "inside", paint: { "circle-color": kindColourExpr(), "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 3.5, 16, 6.5], "circle-stroke-color": "#0b0d12", "circle-stroke-width": 1.5 } });
   }
 
   function setMode(mode) {
     state.mode = mode;
     for (const b of $("chips").children) b.setAttribute("aria-checked", String(b.dataset.mode === mode));
-    if (map.getLayer("hex-fill")) {
-      map.setPaintProperty("hex-fill", "fill-color", hexColour());
+    if (map.getLayer("hex")) {
+      map.setPaintProperty("hex", "fill-extrusion-color", hexColour());
       map.setFilter("places", placesFilter());
+      map.setFilter("places-glow", placesFilter());
     }
     renderLegend();
   }
 
+  function setHeights() {
+    const tall = state.is3d && !state.walking;
+    map.setPaintProperty("hex", "fill-extrusion-height", tall ? HEIGHT : 0);
+    map.setPaintProperty("hex", "fill-extrusion-opacity", state.walking ? 0.2 : 0.86);
+  }
+
+  function set3d(on) {
+    state.is3d = on;
+    $("dim-toggle").setAttribute("aria-pressed", String(on));
+    $("dim-toggle").textContent = on ? "3D" : "2D";
+    setHeights();
+    if (!state.walking) map.easeTo({ pitch: on ? 52 : 0, bearing: on ? -18 : 0, duration: REDUCED ? 0 : 1200 });
+  }
+
   // ---------- hover ----------
 
-  const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, maxWidth: "260px" });
+  const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, maxWidth: "260px", offset: 12 });
   function onHover(e) {
     const f = e.features && e.features[0];
-    if (!f) return;
+    if (!f || MOBILE()) return;
     const p = f.properties;
     let html;
-    if (f.layer.id === "hex-fill") {
+    if (f.layer.id === "hex") {
       const line = state.mode === "all"
-        ? `<b>${p.n} of 6</b> essentials within ~15 min`
-        : `Nearest ${esc(state.kinds.find((k) => k.key === state.mode).label.toLowerCase())}: <b>~${Math.round(p["m" + state.kinds.findIndex((k) => k.key === state.mode)])} min</b> walk`;
-      html = `<div>${esc(p.area)}</div><div>~${fmt(p.pop)} people here</div><div>${line}</div><div style="color:#78716c">Estimate. Click to walk it for real.</div>`;
+        ? `<span class="ph">${p.n}/6</span> essentials within ~15 min`
+        : `<span class="ph">~${Math.round(p["m" + kindIndex(state.mode)])} min</span> to the nearest ${esc(state.kinds[kindIndex(state.mode)].label.toLowerCase())}`;
+      html = `<div class="pm">${esc(p.area)} · ~${fmt(p.pop)} people</div><div>${line}</div><div class="pm">Estimate · click to walk it for real</div>`;
     } else {
-      html = `<b>${esc(p.name)}</b><br>${esc(state.kinds[p.kind].label)}`;
+      html = `<b>${esc(p.name)}</b><div class="pm">${esc(state.kinds[p.kind].label)}</div>`;
     }
     popup.setLngLat(e.lngLat).setHTML(html).addTo(map);
   }
@@ -349,16 +335,14 @@
   // ---------- the walk ----------
 
   function nearestArea(lonlat) {
-    const cell = h3.latLngToCell(lonlat[1], lonlat[0], state.summary.h3_resolution);
-    const i = state.cellIndex.get(cell);
-    const k = state.kinds.length;
-    if (i !== undefined) return state.hex.areas[state.hex.cells[i][2 + k]][0];
-    let best = null, bd = Infinity;
+    const i = state.cellIndex.get(h3.latLngToCell(lonlat[1], lonlat[0], state.summary.h3_resolution));
+    if (i !== undefined) return state.hex.areas[state.hex.cells[i][2 + state.kinds.length]][0];
+    let best = "Chennai", bd = Infinity;
     for (const a of state.hex.areas) {
       const d = metres(lonlat, [a[1], a[2]]);
       if (d < bd) { bd = d; best = a[0]; }
     }
-    return best || "Chennai";
+    return best;
   }
 
   function nearestOfKind(lonlat, kind) {
@@ -371,24 +355,79 @@
     return best && { place: best, metres: bd };
   }
 
+  /** Fly to a bbox with a gentle tilt, keeping it clear of the floating panel. */
+  function frame(b, duration) {
+    const pad = MOBILE() ? { top: 24, bottom: 24, left: 24, right: 24 } : { top: 90, bottom: 90, left: 480, right: 90 };
+    const none = { top: 0, bottom: 0, left: 0, right: 0 };
+    map.setPadding(none);
+    const cam = map.cameraForBounds([[b[0], b[1]], [b[2], b[3]]], { padding: pad, bearing: 0 });
+    if (!cam) return;
+    map.flyTo({ center: cam.center, zoom: Math.min(15.5, cam.zoom - 0.25), pitch: 38, bearing: -12, padding: none, duration: REDUCED ? 0 : duration, essential: true });
+  }
+
+  let marker = null;
+  function placeMarker(lonlat) {
+    if (!marker) {
+      const el = document.createElement("div");
+      el.className = "origin-marker";
+      marker = new maplibregl.Marker({ element: el });
+    }
+    marker.setLngLat(lonlat).addTo(map);
+  }
+
+  async function animateRoute(line) {
+    const src = map.getSource("route");
+    if (REDUCED || line.length < 3) {
+      src.setData({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: line } });
+      return;
+    }
+    const total = 1400, t0 = performance.now();
+    await new Promise((done) => {
+      const step = (now) => {
+        const t = Math.min(1, (now - t0) / total);
+        const eased = 1 - Math.pow(1 - t, 3);
+        const n = Math.max(2, Math.ceil(eased * line.length));
+        src.setData({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: line.slice(0, n) } });
+        if (t < 1) requestAnimationFrame(step); else done();
+      };
+      requestAnimationFrame(step);
+    });
+  }
+
+  function ringSVG(have) {
+    const r = 36, c = 2 * Math.PI * r;
+    const colour = have >= 5 ? "#3fd5c4" : have >= 3 ? "#ffb347" : "#ff4d4d";
+    return `<div class="ring" style="color:${colour}">
+      <svg viewBox="0 0 84 84"><circle class="track" cx="42" cy="42" r="${r}" fill="none" stroke-width="7"/>
+      <circle class="val" cx="42" cy="42" r="${r}" fill="none" stroke="${colour}" stroke-width="7" stroke-linecap="round" stroke-dasharray="${c}" stroke-dashoffset="${c}" data-target="${c * (1 - have / 6)}"/></svg>
+      <div class="num">${have}<small>OF 6</small></div></div>`;
+  }
+
   async function analyse(lonlat, label) {
     if (state.busy) return;
     state.busy = true;
+    state.walking = true;
+    popup.remove();
     lonlat = [Number(lonlat[0].toFixed(5)), Number(lonlat[1].toFixed(5))];
     const area = label || nearestArea(lonlat);
     history.replaceState(null, "", `#@${lonlat[1].toFixed(5)},${lonlat[0].toFixed(5)}`);
-    $("hint").hidden = true;
-    map.setPaintProperty("hex-fill", "fill-opacity", 0.18);
 
     const box = $("result");
     box.hidden = false;
-    box.classList.add("loading");
-    box.innerHTML = `<h3>Walking out from ${esc(area)}…</h3><p class="where">Asking Amazon Location Service for the 5, 10 and 15-minute walking areas.</p>`;
-    map.getSource("origin").setData({ type: "Feature", geometry: { type: "Point", coordinates: lonlat }, properties: {} });
-    map.getSource("circle").setData({ type: "Feature", properties: {}, geometry: { type: "MultiPolygon", coordinates: circle(lonlat, CIRCLE_M) } });
-    map.getSource("route").setData({ type: "FeatureCollection", features: [] });
+    box.className = "result loading";
+    box.innerHTML = `<p class="r-eyebrow">Walking out from</p><h3>${esc(area)}</h3><p class="verdict">Asking Amazon Location Service for the real 5, 10 and 15-minute walks…</p><div class="scan"></div>`;
+    $("panel").scrollTo({ top: box.offsetTop - 12, behavior: REDUCED ? "auto" : "smooth" });
 
-    let isos = null, isoError = null;
+    setHeights();
+    placeMarker(lonlat);
+    const empty = { type: "FeatureCollection", features: [] };
+    for (const id of ["iso", "route", "inside"]) map.getSource(id).setData(empty);
+    map.getSource("circle").setData({ type: "Feature", properties: {}, geometry: { type: "MultiPolygon", coordinates: circle(lonlat, CIRCLE_M) } });
+    const preview = circle(lonlat, CIRCLE_M * 1.15)[0][0];
+    const pb = bboxOf([[preview]]);
+    frame(pb, 1600);
+
+    let isos, isoError = null;
     try {
       isos = await api.isolines(lonlat);
       if (!isos.length || !isos.some((i) => i.polygons.length)) throw new Error("Empty isoline");
@@ -398,21 +437,29 @@
       const r = state.summary.reach_crow_m;
       isos = [300, 600, 900].map((s) => ({ seconds: s, polygons: circle(lonlat, (r * s) / 900) }));
     }
-    isos.sort((a, b) => b.seconds - a.seconds);
-    map.getSource("iso").setData({
-      type: "FeatureCollection",
-      features: isos.map((i) => ({
-        type: "Feature",
-        properties: { seconds: i.seconds, colour: ISO_STYLE[i.seconds][0], opacity: ISO_STYLE[i.seconds][1] },
-        geometry: { type: "MultiPolygon", coordinates: i.polygons },
-      })),
-    });
 
-    const walk15 = isos.find((i) => i.seconds === 900).polygons;
+    // Grow the walk outward: 5, then 10, then 15 minutes.
+    const shown = [];
+    for (const s of [300, 600, 900]) {
+      const iso = isos.find((i) => i.seconds === s);
+      if (!iso) continue;
+      shown.unshift(iso);
+      map.getSource("iso").setData({
+        type: "FeatureCollection",
+        features: shown.map((i) => ({
+          type: "Feature",
+          properties: { seconds: i.seconds, colour: ISO_STYLE[i.seconds][0], opacity: ISO_STYLE[i.seconds][1] },
+          geometry: { type: "MultiPolygon", coordinates: i.polygons },
+        })),
+      });
+      await sleep(380);
+    }
+
+    const walk15 = (isos.find((i) => i.seconds === 900) || isos[0]).polygons;
     const [x0, y0, x1, y1] = bboxOf(walk15);
     const inside = state.ess.places.filter((p) => p[0] >= x0 && p[0] <= x1 && p[1] >= y0 && p[1] <= y1 && inMulti(p, walk15));
-    const inCircle = state.ess.places.filter((p) => metres(lonlat, p) <= CIRCLE_M);
-    map.getSource("inside").setData(placesGeoJSON(((s) => (p) => s.has(p))(new Set(inside))));
+    const inCircle = state.ess.places.filter((p) => metres(lonlat, p) <= CIRCLE_M).length;
+    map.getSource("inside").setData(placesGeoJSON(inside));
 
     const counts = state.kinds.map((_, k) => inside.filter((p) => p[2] === k).length);
     const missing = state.kinds.filter((_, k) => counts[k] === 0).map((k) => k.label.toLowerCase());
@@ -421,66 +468,78 @@
     // Walk to the nearest hospital or clinic.
     const near = nearestOfKind(lonlat, 0);
     let routeHtml = "";
+    let routeLine = null;
     if (near) {
       const name = esc(near.place[3]);
       try {
         if (isoError) throw isoError;
         const r = await api.route(lonlat, [near.place[0], near.place[1]]);
-        if (r.line.length) {
-          map.getSource("route").setData({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: r.line } });
-        }
+        routeLine = r.line;
         const mins = Math.round(r.duration / 60);
-        routeHtml = `<div class="route">Nearest hospital or clinic: <b>${name}</b>, a <b>${mins}-minute walk</b> (${(r.distance / 1000).toFixed(1)} km by street).${mins > 15 ? ` That's <b>${mins - 15} minutes over</b> the line.` : ""}</div>`;
+        routeHtml = `<div class="route-box"><div class="mins">${mins}<small>min</small></div>
+          <div class="r1">walk to the nearest hospital or clinic${mins > 15 ? `<span class="over">+${mins - 15} over</span>` : ""}</div>
+          <div class="r2">${name} · ${(r.distance / 1000).toFixed(1)} km by street</div></div>`;
       } catch {
         const mins = Math.round(crowToMinutes(near.metres));
-        routeHtml = `<div class="route">Nearest hospital or clinic: <b>${name}</b>, about <b>${mins} minute${mins === 1 ? "" : "s"}</b> on foot (straight-line estimate).</div>`;
+        routeHtml = `<div class="route-box"><div class="mins">~${mins}<small>min</small></div>
+          <div class="r1">to the nearest hospital or clinic (estimate)</div><div class="r2">${name}</div></div>`;
       }
     }
 
-    const area15 = multiArea(walk15);
-    const areaCircle = Math.PI * CIRCLE_M * CIRCLE_M;
-    const pct = Math.round((area15 / areaCircle) * 100);
-    const circleNote = isoError
-      ? `<p class="circle-note">${HAS_KEY ? "Couldn't reach Amazon Location Service just now" : "No Amazon Location API key is configured"}, so these rings are a straight-line estimate, not real streets.</p>`
-      : `<p class="circle-note">The dashed circle is what "15 minutes" covers if you could walk in straight lines at the same pace (${(CIRCLE_M / 1000).toFixed(2)} km). Real streets reach <b>${pct}%</b> of that area here. The circle holds <b>${inCircle.length}</b> essential places; your feet reach <b>${inside.length}</b>.</p>`;
+    const pct = Math.round((multiArea(walk15) / (Math.PI * CIRCLE_M * CIRCLE_M)) * 100);
+    const compare = isoError
+      ? `<p class="est-note">${HAS_KEY ? "Couldn't reach Amazon Location Service just now" : "No Amazon Location API key configured"}, so these rings are a straight-line estimate, not real streets.</p>`
+      : `<div class="compare"><div class="c-row"><span>Streets reach <b>${Math.min(pct, 999)}%</b> of the straight-line circle</span><span><b>${inside.length}</b> of ${inCircle} places</span></div>
+         <div class="c-bar"><span style="width:0" data-w="${Math.min(100, pct)}%"></span></div>
+         <p>The dashed circle is how far ${(CIRCLE_M / 1000).toFixed(2)} km, a 15-minute walk, would take you in a straight line. Rivers, railways and dead ends decide the rest.</p></div>`;
 
-    const rows = state.kinds.map((k, i) => {
+    const tiles = state.kinds.map((k, i) => {
       const n = nearestOfKind(lonlat, i);
-      const est = n ? `~${Math.round(crowToMinutes(n.metres))} min` : "–";
-      return `<tr><th><i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${KIND_COLOURS[i]};margin-right:6px"></i>${esc(k.label)}</th><td class="${counts[i] ? "" : "zero"}">${counts[i]}</td><td>${est}</td></tr>`;
+      const est = n ? `nearest ~${Math.round(crowToMinutes(n.metres))} min` : "";
+      return `<div class="tile ${counts[i] ? "" : "zero"}" style="animation-delay:${i * 60}ms"><div class="t-count"><i style="background:${KIND_COLOURS[i]};color:${KIND_COLOURS[i]}"></i>${counts[i]}</div><div class="t-label">${esc(k.label)}</div><div class="t-near">${est}</div></div>`;
     }).join("");
 
-    box.classList.remove("loading");
+    box.className = "result" + (have <= 3 ? " bad" : "");
     box.innerHTML = `
-      <h3>Your 15-minute walk</h3>
-      <p class="where">from near <b>${esc(area)}</b> · ${lonlat[1].toFixed(4)}, ${lonlat[0].toFixed(4)}</p>
-      <div class="key-swatches"><span class="k-walk">${isoError ? "estimated" : "real"} walk: 5 / 10 / 15 min</span><span class="k-circle">straight-line circle</span><span class="k-route">route</span></div>
-      <p class="verdict"><b>${have} of 6</b> essentials within 15 minutes on foot.${missing.length ? ` Missing: <b>${esc(missing.join(", "))}</b>.` : " Everything's in reach."}</p>
-      <table>
-        <thead><tr><th>Essential</th><td>in walk</td><td>nearest</td></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
+      <div class="r-top">
+        <div><p class="r-eyebrow">${isoError ? "Estimated" : "Real"} 15-minute walk from</p><h3>${esc(area)}</h3>
+        <p class="verdict">${have === 6 ? "<b>Everything's in reach.</b>" : `Missing: <b>${esc(missing.join(", "))}</b>.`}</p></div>
+        ${ringSVG(have)}
+      </div>
+      <div class="tiles">${tiles}</div>
       ${routeHtml}
-      ${circleNote}
-      <div class="actions"><button type="button" id="copy-link">Copy link to this walk</button><button type="button" id="clear">Clear</button></div>`;
+      ${compare}
+      <div class="legend-key"><span class="k-walk">${isoError ? "estimated" : "real"} walk 5·10·15 min</span><span class="k-circle">straight-line circle</span><span class="k-route">route</span></div>
+      <div class="r-actions"><button type="button" class="btn btn-ghost" id="copy-link">Copy link to this walk</button><button type="button" class="btn btn-ghost" id="clear">Back to the city</button></div>`;
+    requestAnimationFrame(() => {
+      const v = box.querySelector(".ring .val"); if (v) v.style.strokeDashoffset = v.dataset.target;
+      const b = box.querySelector(".c-bar span"); if (b) b.style.width = b.dataset.w;
+    });
     $("copy-link").onclick = async (ev) => {
       try { await navigator.clipboard.writeText(location.href); ev.target.textContent = "Link copied"; } catch { ev.target.textContent = location.href; }
     };
     $("clear").onclick = clearWalk;
 
-    const mobile = window.matchMedia("(max-width: 820px)").matches;
-    const pad = mobile ? 30 : 70;
-    if (mobile) box.scrollIntoView({ behavior: "smooth", block: "start" });
-    map.fitBounds([[Math.min(x0, lonlat[0] - 0.012), Math.min(y0, lonlat[1] - 0.012)], [Math.max(x1, lonlat[0] + 0.012), Math.max(y1, lonlat[1] + 0.012)]], { padding: pad, maxZoom: 15, duration: 900 });
+    const fb = [Math.min(x0, lonlat[0] - 0.006), Math.min(y0, lonlat[1] - 0.006), Math.max(x1, lonlat[0] + 0.006), Math.max(y1, lonlat[1] + 0.006)];
+    if (routeLine) for (const [x, y] of routeLine) { fb[0] = Math.min(fb[0], x); fb[1] = Math.min(fb[1], y); fb[2] = Math.max(fb[2], x); fb[3] = Math.max(fb[3], y); }
+    frame(fb, 1100);
+    if (routeLine) await animateRoute(routeLine);
     state.busy = false;
   }
 
   function clearWalk() {
     const empty = { type: "FeatureCollection", features: [] };
-    for (const id of ["iso", "circle", "route", "inside", "origin"]) map.getSource(id).setData(empty);
+    for (const id of ["iso", "circle", "route", "inside"]) map.getSource(id).setData(empty);
+    if (marker) marker.remove();
     $("result").hidden = true;
-    map.setPaintProperty("hex-fill", "fill-opacity", HEX_OPACITY);
+    state.walking = false;
+    setHeights();
     history.replaceState(null, "", location.pathname);
+    flyHome();
+  }
+
+  function flyHome(duration = 1600) {
+    map.flyTo({ center: CENTER, zoom: MOBILE() ? 9.9 : 10.55, pitch: state.is3d ? 52 : 0, bearing: state.is3d ? -18 : 0, padding: MOBILE() ? {} : { left: 440 }, duration: REDUCED ? 0 : duration, essential: true });
   }
 
   // ---------- panel ----------
@@ -491,7 +550,7 @@
       const b = document.createElement("button");
       b.type = "button"; b.className = "chip"; b.dataset.mode = mode;
       b.setAttribute("role", "radio");
-      b.innerHTML = (colour ? `<i style="background:${colour}"></i>` : "") + esc(label);
+      b.innerHTML = (colour ? `<i style="background:${colour};color:${colour}"></i>` : "") + esc(label);
       b.onclick = () => setMode(mode);
       chips.appendChild(b);
     };
@@ -503,23 +562,38 @@
     const lg = $("legend");
     if (state.mode === "all") {
       lg.innerHTML = `<div class="ramp">${COUNT_COLOURS.map((c) => `<span style="background:${c}"></span>`).join("")}</div>
-        <div class="labels"><span>0 of 6</span><span>essentials within ~15 min walk</span><span>6 of 6</span></div>`;
+        <div class="labels"><span>0 of 6</span><span>essentials within a ~15-min walk</span><span><b>6 of 6</b></span></div>`;
     } else {
       lg.innerHTML = `<div class="ramp">${MINUTE_COLOURS.map((c) => `<span style="background:${c}"></span>`).join("")}</div>
         <div class="labels"><span>5</span><span>10</span><span><b>15 min</b></span><span>20</span><span>30</span><span>30+</span></div>`;
     }
   }
 
+  function countUp(el, target, ms = 1800) {
+    if (REDUCED) { el.textContent = fmt(target); return; }
+    const t0 = performance.now();
+    const step = (now) => {
+      const t = Math.min(1, (now - t0) / ms);
+      el.textContent = fmt(target * (1 - Math.pow(1 - t, 4)));
+      if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
   function renderFindings() {
     const s = state.summary;
-    $("stat-no-hospital").textContent = fmt(Math.round(s.people_no_hospital / 1000) * 1000);
-    $("bars").innerHTML = state.kinds.map((k) => {
+    countUp($("stat-no-hospital"), Math.round(s.people_no_hospital / 1000) * 1000);
+    $("bars").innerHTML = state.kinds.map((k, i) => {
       const v = s.share_within_reach[k.key];
-      return `<div class="bar"><span>${esc(k.label)}</span><span class="track"><span class="fill" style="width:${(v * 100).toFixed(1)}%;display:block"></span></span><span class="pct">${Math.round(v * 100)}%</span></div>`;
+      return `<div class="bar"><span>${esc(k.label)}</span><span class="pct">${Math.round(v * 100)}%</span><span class="track"><span class="fill" data-w="${(v * 100).toFixed(1)}%" style="transition-delay:${i * 90}ms"></span></span></div>`;
     }).join("");
+    requestAnimationFrame(() => setTimeout(() => {
+      for (const f of $("bars").querySelectorAll(".fill")) f.style.width = f.dataset.w;
+    }, 300));
     $("all-six").innerHTML = `Share of ${fmt(s.population)} people with each essential within ~15 minutes on foot. Only <b>${Math.round(s.share_all_six * 100)}%</b> have all six.`;
+    const max = s.worst_areas_for_hospital[0].people_beyond;
     $("worst").innerHTML = s.worst_areas_for_hospital.map((w, i) =>
-      `<li><button type="button" data-i="${i}"><span>${esc(w.name)}</span><span class="n">${fmt(w.people_beyond)}</span></button></li>`).join("");
+      `<li><button type="button" data-i="${i}"><span>${esc(w.name)}</span><span class="n">${fmt(w.people_beyond)}</span><span class="heat" style="width:${(w.people_beyond / max) * 100}%"></span></button></li>`).join("");
     for (const b of $("worst").querySelectorAll("button")) {
       b.onclick = () => {
         const w = s.worst_areas_for_hospital[Number(b.dataset.i)];
@@ -527,6 +601,73 @@
       };
     }
   }
+
+  // ---------- story tour ----------
+
+  const tour = { on: false, i: 0, next: null };
+  function tourSteps() {
+    const s = state.summary;
+    const worst = s.worst_areas_for_hospital[0];
+    return [
+      {
+        text: `This is Chennai: <b>${(s.population / 1e6).toFixed(1)} million people</b>, mapped in ${fmt(s.cells)} hexagons. Each tower's <span class="cool">height</span> is how many people live there.`,
+        run: async () => { setMode("hospital"); state.walking = false; setHeights(); map.flyTo({ center: CENTER, zoom: MOBILE() ? 9.9 : 10.6, pitch: 58, bearing: -28, padding: MOBILE() ? {} : { left: 440 }, duration: REDUCED ? 0 : 3000 }); },
+        ms: 6500,
+      },
+      {
+        text: `Colour is the walk to the nearest hospital or clinic. <span class="cool">Teal</span> is under 15 minutes. <b>Orange and red</b> is more: that's <b>${fmt(Math.round(s.people_no_hospital / 1000) * 1000)} people</b>.`,
+        run: async () => { map.easeTo({ bearing: 12, pitch: 55, duration: REDUCED ? 0 : 6000 }); },
+        ms: 6500,
+      },
+      {
+        text: `The gaps are on the edges where the city grew fastest. Take <b>${esc(worst.name)}</b>: ${fmt(worst.people_beyond)} people. Here's the real 15-minute walk from Amazon Location Service.`,
+        run: async () => { await analyse([worst.lon, worst.lat], worst.name); },
+        ms: 9000,
+      },
+      {
+        text: `Now the city centre. <b>Velachery</b>: same 15 minutes, a very different answer.`,
+        run: async () => { await analyse([80.2185, 12.9794], "Velachery"); },
+        ms: 9000,
+      },
+      {
+        text: `Only <b>${Math.round(s.share_all_six * 100)}%</b> of Chennai can walk to all six essentials. <span class="cool">Search your street, or click anywhere,</span> to see yours.`,
+        run: async () => { clearWalk(); },
+        ms: 7000,
+      },
+    ];
+  }
+
+  async function playTour() {
+    if (tour.on) return;
+    tour.on = true;
+    document.body.classList.add("touring");
+    $("tour").hidden = false;
+    const steps = tourSteps();
+    $("tour-steps").innerHTML = steps.map(() => "<span></span>").join("");
+    for (tour.i = 0; tour.i < steps.length && tour.on; tour.i++) {
+      const st = steps[tour.i];
+      [...$("tour-steps").children].forEach((el, j) => { el.className = j < tour.i ? "done" : ""; });
+      $("tour-text").innerHTML = st.text;
+      $("tour-next").textContent = tour.i === steps.length - 1 ? "Explore" : "Next";
+      await st.run();
+      if (!tour.on) break;
+      const bar = $("tour-steps").children[tour.i];
+      bar.style.setProperty("--dur", `${st.ms}ms`);
+      bar.className = "now";
+      await new Promise((r) => { tour.next = r; setTimeout(r, st.ms); });
+    }
+    endTour();
+  }
+  function endTour() {
+    tour.on = false;
+    if (tour.next) tour.next();
+    document.body.classList.remove("touring");
+    $("tour").hidden = true;
+  }
+  $("tour-btn").onclick = playTour;
+  $("tour-next").onclick = () => { if (tour.next) tour.next(); };
+  $("tour-skip").onclick = endTour;
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && tour.on) endTour(); });
 
   // ---------- search ----------
 
@@ -542,7 +683,7 @@
     const list = $("search-results");
     if (!q) return;
     let results = [];
-    try { results = await api.geocode(q.match(/chennai/i) ? q : `${q}, Chennai`); } catch (err) { console.warn(err); }
+    try { results = await api.geocode(/chennai/i.test(q) ? q : `${q}, Chennai`); } catch (err) { console.warn(err); }
     if (!results.length) results = localSearch(q);
     list.innerHTML = results.length
       ? results.map((r, i) => `<li><button type="button" data-i="${i}">${esc(r.label)}</button></li>`).join("")
@@ -567,18 +708,23 @@
     setMode("hospital");
     renderFindings();
     addLayers();
-    $("show-places").onchange = (e) => map.setLayoutProperty("places", "visibility", e.target.checked ? "visible" : "none");
-    for (const id of ["hex-fill", "places"]) {
+    $("dim-toggle").onclick = () => set3d(!state.is3d);
+    $("show-places").onchange = (e) => {
+      for (const id of ["places", "places-glow"]) map.setLayoutProperty(id, "visibility", e.target.checked ? "visible" : "none");
+    };
+    for (const id of ["hex", "places"]) {
       map.on("mousemove", id, onHover);
       map.on("mouseleave", id, () => popup.remove());
     }
-    map.on("mouseenter", "hex-fill", () => { map.getCanvas().style.cursor = "crosshair"; });
-    map.on("click", (e) => analyse([e.lngLat.lng, e.lngLat.lat]));
+    map.on("click", (e) => { if (!tour.on) analyse([e.lngLat.lng, e.lngLat.lat]); });
     const m = location.hash.match(/^#@(-?\d+\.?\d*),(-?\d+\.?\d*)/);
     if (m) analyse([Number(m[2]), Number(m[1])]);
+    else flyHome(2600);
+    const attrib = document.querySelector(".maplibregl-ctrl-attrib");
+    if (attrib && MOBILE()) attrib.classList.remove("maplibregl-compact-show");
     window.__reachReady = true;
   });
   dataReady.catch((err) => {
-    $("panel").insertAdjacentHTML("afterbegin", `<p class="small" style="color:#c2410c">Couldn't load the map data (${esc(err.message)}). Try reloading.</p>`);
+    $("panel").insertAdjacentHTML("afterbegin", `<p class="small" style="color:#ff5a36">Couldn't load the map data (${esc(err.message)}). Try reloading.</p>`);
   });
 })();

@@ -7,6 +7,9 @@
 
 ## What you can do on it
 
+- **Play the story.** A 40-second guided tour flies over the city in 3D, walks the worst-served neighbourhood and then the city centre with live Amazon Location data, and hands over to you.
+- **See the city in 3D.** Each hexagon is a tower: its height is how many people live there, its colour is how long they walk to help. Flip to 2D with one button.
+
 - **See the city's gaps at a glance.** About 6,700 hexagons (H3 resolution 9, ~0.1 km² each) cover every populated part of Chennai. Each is coloured by how many minutes it takes to walk to the nearest hospital, pharmacy, school, grocery, park or station, or by how many of the six are within 15 minutes ("All six").
 - **Click anywhere to walk it for real.** Amazon Location Service returns the **5, 10 and 15-minute walking areas** from that point (`CalculateIsolines`, pedestrian). The page then:
   - counts every hospital, pharmacy, school, grocery, park and station inside the 15-minute area
