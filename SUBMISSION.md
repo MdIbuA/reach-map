@@ -34,6 +34,8 @@ About 1.6 million people in and around Chennai live more than a 15-minute walk f
 
 **Why Amazon Location Service.** It's the only part of the stack that knows the streets. Isolines answer "what can I reach?" in one call. An API key with a referrer restriction lets a static site use Maps, Places and Routes directly: no Cognito, no Lambda, no server.
 
+**What you can do on it.** A landing page shows the city as 3D towers (height = people, colour = minutes to the nearest hospital). "Play the story" is a 40-second guided tour that walks the worst-served area and the city centre with live Amazon Location data. Then you can explore on your own: click anywhere, search any address, or switch between the six essentials. Every walk has a shareable link.
+
 **What the map reveals.**
 - 81% of people have a hospital or clinic within about 15 minutes on foot, 78% a pharmacy, 90% a school, 73% a grocery, but only 49% a park and 55% a station. **Only 29% have all six.**
 - In Alinjivakkam, the worst-served area, the real 15-minute walk reaches **none** of the six essentials. The nearest hospital is a **39-minute walk** (2.2 km by street), while in Velachery a clinic is 4 minutes away.
@@ -62,14 +64,14 @@ Record the browser at 1440×900 with OBS or the Windows Game Bar (Win+Alt+R), an
 
 | Time | On screen | Say |
 |---|---|---|
-| 0:00–0:15 | Landing page, whole city | "This is Chennai, my city. About 1.6 million people here live more than a 15-minute walk from a hospital or clinic. This map shows where, and lets you check any street yourself." |
-| 0:15–0:35 | Hover a few hexagons; switch chips Hospital → Park → All six | "Every hexagon is about a tenth of a square kilometre, with its population from the High Resolution Settlement Layer and its nearest essentials from Overture Maps. Both come from the Registry of Open Data on AWS, read straight from S3. Teal is within 15 minutes, orange is beyond. On 'All six', fewer than a third of people have everything." |
-| 0:35–1:10 | Click a central spot (for example Mylapore) | "Now the real part. When I click, Amazon Location Service calculates the actual 5, 10 and 15-minute walking areas from this spot. The page counts what's inside: 6 of 6 here. The dashed circle is what 15 minutes *would* cover in straight lines. Real streets reach only this much of it." |
-| 1:10–1:50 | "Furthest from a hospital" → tap #1 Alinjivakkam (or Manjampakkam) | "Here's the other end. Out on the edge the walking area is small, and Amazon Location routes me to the nearest clinic: a walk well over 15 minutes. Missing here: …" (read what the card says) |
-| 1:50–2:10 | Search "Sholinganallur" → result | "You can search any address. That's Amazon Location Geocode. The IT corridor has offices, but clinics and parks lag behind the people." |
-| 2:10–2:30 | Click "Copy link"; scroll to "The catch"; flash the GitHub README | "Every walk has a shareable link. The page lists its own limits: Overture misses some government clinics and bus stops. The whole pipeline is on GitHub. Change one bounding box and it runs for your city." |
-| 2:30–2:40 | Back to the city view | "How far is help? Now you can check. Built with Amazon Location Service, S3 open data, and a site served from S3." |
+| 0:00–0:15 | Landing page, 3D city rotating behind it, the counter running up | "This is Chennai, my city. About 1.6 million people here, 1 in 5, live more than a 15-minute walk from a hospital or clinic. This map shows where, and lets anyone check their own street." |
+| 0:15–1:00 | Click **Play the story** and let it run through the city flyover and the Alinjivakkam walk | Talk over it: "Every tower is about a tenth of a square kilometre. Height is how many people live there, from the High Resolution Settlement Layer. Colour is the walk to the nearest hospital, from Overture Maps places. Both come from the Registry of Open Data on AWS, read straight from S3." Then, as the walk grows: "Amazon Location Service calculates the real 5, 10 and 15-minute walk from Alinjivakkam. Zero of six essentials. The nearest hospital is a 39-minute walk, 24 minutes over." |
+| 1:00–1:30 | The tour moves to Velachery | "Same 15 minutes in Velachery: everything's in reach. The dashed circle is what 15 minutes would cover in a straight line. The streets decide how much of it you actually get." |
+| 1:30–2:00 | Skip the tour → type your own area in search → **Walk it** | "You can search any address. That's Amazon Location's Geocode. Here's my own neighbourhood…" (read the score ring and the route time off the card) |
+| 2:00–2:25 | Switch the chips (Park → All six), then the 3D/2D toggle; scroll to "The catch" | "Parks are the worst: under half the city has one in walking distance. Only 29% have all six. The page lists its own limits, and the walking model is calibrated against 35 real Amazon Location routes." |
+| 2:25–2:40 | Flash the GitHub README, then back to the landing view | "The whole pipeline is on GitHub. Change one bounding box and it runs for your city. How far is help? Now you can check." |
 
 Before you record:
-- Click 3–4 spots first and pick the most dramatic contrast (a city-centre spot vs one of the "furthest" areas). Read the real numbers off the card. Don't use the script's placeholders.
+- Do one practice run of the story first so the map tiles are cached and the recording is smooth.
+- Pick your own area for the search part, and read the real numbers off the card.
 - Close other tabs, zoom the browser to 100% and turn off notifications.
